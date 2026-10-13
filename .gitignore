@@ -33,3 +33,7 @@ BF_Undead/_reference/
 *.blend
 *.blend1
 One-Offs/_loose/Carrier_Layout_Carrierstrike.glb*
+
+# Scene backups
+*.bak
+*.backup
