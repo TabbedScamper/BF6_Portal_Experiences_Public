@@ -1,0 +1,35 @@
+# Rebuilt by "npm install" and "npm run build"
+node_modules/
+dist/
+_build-logs/
+
+# Portal session and mod ids. Never commit these.
+.env
+*.env
+!.env.example
+
+# Local editor and assistant settings
+.claude/
+CLAUDE.md
+.godot/
+
+# Timestamped scene backups made while editing
+*.bak-*
+
+# Other people's projects kept for reference, not mine to publish
+One-Offs/_By-Others/
+
+# Game audio and fonts are read from the game or the sound library, never stored here
+*.ogg
+*.wav
+*.ttf
+
+# Another creator's script kept beside the zombies mode for reference
+BF_Undead/_reference/
+
+# Textures, source models and layouts taken from other games stay out
+*.dds
+*.dds.uid
+*.blend
+*.blend1
+One-Offs/_loose/Carrier_Layout_Carrierstrike.glb*
