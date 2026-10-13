@@ -1,0 +1,11 @@
+node_modules
+.yalc
+yalc.lock
+dist
+package-lock.json
+.DS_Store
+.env
+extension/build
+PortalLog.txt
+Portal-Logs.lnk
+.claude/
