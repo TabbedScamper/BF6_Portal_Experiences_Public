@@ -2956,8 +2956,9 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -312.85, 57.7062, 94.4853)
 CombatVolume = NodePath("CombatVolume")
 
 [node name="CombatVolume" parent="CombatArea" instance=ExtResource("64_a43hw")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -10, 0)
 points = PackedVector2Array(-26.2619, -26.0627, -26.4042, 26.9534, 24.3134, 27.1988, 25.2172, -26.085)
-height = 20.0
+height = 30.0
 
 [node name="Deadlock_Assets" type="Node3D" parent="."]
 transform = Transform3D(1, 0, -5.21541e-08, 0, 1, 0, 5.21541e-08, 0, 1, -312.82, 60.075, 96.225)

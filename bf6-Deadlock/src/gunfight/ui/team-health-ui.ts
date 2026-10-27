@@ -96,6 +96,10 @@ export class TeamHealthUI {
 
     // Team tracking
     private _maxHealthPerTeam = 200;
+    // PERF P1 (2026-10-16): last drawn values. The engine trace measured this HUD at roughly 250 UI calls per second
+    // (text, alpha, colour, size and position every 100 ms) with nothing changing; redraw only on change.
+    private _lastShown = '';
+    private _lastScores = '';
     private _localPlayerTeam: number = 1; // 1 or 2, determines color assignment
     private _receiver?: mod.Player; // The player this UI is for (determines team perspective)
 
@@ -469,10 +473,13 @@ export class TeamHealthUI {
 
     private _startHealthUpdate(): void {
         // Update health and scores every 100ms
+        this._lastShown = '';
+        this._lastScores = '';
         this._updateInterval = Timers.setInterval(() => {
             this._updateHealth();
             this.updateScores();
-        }, 100);
+        }, 200); // PERF P3 (2026-10-16): was 100 ms. Each tick reads alive + health for every player (GetSoldierState
+        // was the top remaining cost at 381/s); 5 updates a second is still smooth for a health bar.
     }
 
     private _stopHealthUpdate(): void {
@@ -563,6 +570,10 @@ export class TeamHealthUI {
         const leftTotal = this._localPlayerTeam === 1 ? team1Players.length : team2Players.length;
         const rightTotal = this._localPlayerTeam === 1 ? team2Players.length : team1Players.length;
 
+        const shown = `${leftHealth}|${rightHealth}|${leftAlive}|${rightAlive}|${leftTotal}|${rightTotal}|${this._maxHealthPerTeam}`;
+        if (shown === this._lastShown) return;
+        this._lastShown = shown;
+
         // Update health number displays
         this._setHealthNumber(this._leftHealthTexts, leftHealth);
         this._setHealthNumber(this._rightHealthTexts, rightHealth);
@@ -631,6 +642,8 @@ export class TeamHealthUI {
         // Left side = local player's team (blue), Right side = enemy team (red)
         const leftScore = this._localPlayerTeam === 1 ? scores.team1 : scores.team2;
         const rightScore = this._localPlayerTeam === 1 ? scores.team2 : scores.team1;
+        if (`${leftScore}|${rightScore}` === this._lastScores) return;
+        this._lastScores = `${leftScore}|${rightScore}`;
 
         // Update left ticks (blue team) - fill from outer edge toward center
         for (let i = 0; i < SCORE_TICK_COUNT; i++) {

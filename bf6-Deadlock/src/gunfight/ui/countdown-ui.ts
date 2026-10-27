@@ -117,6 +117,7 @@ export class CountdownUI {
     private _animationTimer: number | null = null;
     private _isRunning = false;
     private _frozenPlayers: mod.Player[] = [];
+    private _enforcedIds: Set<number> = new Set(); // PERF P2: players already sent the freeze this countdown
     private _startingPositions: Map<number, mod.Vector> = new Map();
     private _positionEnforcementTimer: number | null = null;
     private _currentLoadout: Loadout | null = null;
@@ -1106,6 +1107,7 @@ export class CountdownUI {
     private _startPositionEnforcement(): void {
         logCountdown('Starting position enforcement loop (50ms interval)');
         // Continuously enforce restrictions every tick
+        this._enforcedIds.clear();
         this._positionEnforcementTimer = Timers.setInterval(() => {
             _posEnforcementTicks++;
 
@@ -1125,17 +1127,24 @@ export class CountdownUI {
                     if (!mod.GetSoldierState(player, mod.SoldierStateBool.IsAlive)) continue;
                     stillFrozen.push(player);
                     const isAI = mod.GetSoldierState(player, mod.SoldierStateBool.IsAISoldier);
+                    // PERF P2 (2026-10-16): these settings stick once set; the trace measured ~150 calls/s re-sending
+                    // them every 50 ms. Send on first sight in this freeze, then refresh once a second.
+                    const id = mod.GetObjId(player);
+                    const due = !this._enforcedIds.has(id) || _posEnforcementTicks % 20 === 0;
+                    this._enforcedIds.add(id);
 
                     if (isAI) {
                         bots.push(player);
                         // For bots: enforce idle behavior
-                        mod.AIIdleBehavior(player);
-                        mod.AIEnableShooting(player, false);
-                        mod.AIEnableTargeting(player, false);
+                        if (due) {
+                            mod.AIIdleBehavior(player);
+                            mod.AIEnableShooting(player, false);
+                            mod.AIEnableTargeting(player, false);
+                        }
                     } else {
                         humans.push(player);
-                        // For humans: continuously re-apply input restrictions
-                        for (const input of BLOCKED_INPUTS) {
+                        // For humans: re-apply input restrictions (first sight, then once a second)
+                        if (due) for (const input of BLOCKED_INPUTS) {
                             mod.EnableInputRestriction(player, input, true);
                             _inputRestrictionCalls++;
                         }

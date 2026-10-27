@@ -217,7 +217,10 @@ export function randomizeBotNames(): void {
 // (returns null if none available)
 /** Is this player id still a valid, ALIVE bot on the field? (Used to refuse handing out a
  *  name that is visibly in use — belt-and-braces against a stale isActive flag.) */
-function isPlayerIdLiveBot(playerId: number): boolean {
+// FIX F4 (2026-10-16): player ids are reused. A departed bot's id can belong to a new bot, even on the other team, so
+// "that id is a live bot" kept the old name reserved and that team ran out of names (enemy team short a bot).
+// The live bot must also be on the identity's team.
+function isPlayerIdLiveBot(playerId: number, teamId: number): boolean {
     try {
         const all = mod.AllPlayers();
         const count = mod.CountOf(all);
@@ -226,7 +229,8 @@ function isPlayerIdLiveBot(playerId: number): boolean {
             try {
                 if (mod.GetObjId(p) !== playerId) continue;
                 return (
-                    mod.IsPlayerValid(p) && mod.GetSoldierState(p, mod.SoldierStateBool.IsAlive)
+                    mod.IsPlayerValid(p) && mod.GetSoldierState(p, mod.SoldierStateBool.IsAlive) &&
+                    mod.GetObjId(mod.GetTeam(p)) === teamId
                 );
             } catch {}
         }
@@ -239,7 +243,7 @@ export function getAvailableBotIdentity(teamId: number): BotIdentity | null {
         if (identity.teamId !== teamId || identity.isActive) continue;
         // NEVER reuse a name whose bot is still alive on the field. A free identity has
         // currentPlayerId === null, so this scan only runs for suspicious leftovers.
-        if (identity.currentPlayerId !== null && isPlayerIdLiveBot(identity.currentPlayerId)) {
+        if (identity.currentPlayerId !== null && isPlayerIdLiveBot(identity.currentPlayerId, identity.teamId)) {
             identity.isActive = true; // re-reserve it for the bot that still owns it
             rosterLog(`Identity ${identity.id} (${identity.name}) still live — not reused`);
             continue;
@@ -302,7 +306,7 @@ export function deactivateBotIdentity(playerId: number): void {
  * a batch would hand those same identities out twice.
  */
 export function resetBotIdentitiesForRound(): void {
-    const liveBotIds: Set<number> = new Set<number>();
+    const liveBotTeams: Map<number, number> = new Map<number, number>(); // live bot id -> its team (F4)
     try {
         const all = mod.AllPlayers();
         const count = mod.CountOf(all);
@@ -312,14 +316,14 @@ export function resetBotIdentitiesForRound(): void {
                 if (!mod.IsPlayerValid(p)) continue;
                 if (!mod.GetSoldierState(p, mod.SoldierStateBool.IsAISoldier)) continue;
                 if (!mod.GetSoldierState(p, mod.SoldierStateBool.IsAlive)) continue;
-                liveBotIds.add(mod.GetObjId(p));
+                liveBotTeams.set(mod.GetObjId(p), mod.GetObjId(mod.GetTeam(p)));
             } catch {}
         }
     } catch {}
 
     let kept = 0;
     for (const identity of BOT_IDENTITIES) {
-        if (identity.currentPlayerId !== null && liveBotIds.has(identity.currentPlayerId)) {
+        if (identity.currentPlayerId !== null && liveBotTeams.get(identity.currentPlayerId) === identity.teamId) {
             identity.isActive = true; // survivor keeps its name AND its stats
             kept++;
             continue;

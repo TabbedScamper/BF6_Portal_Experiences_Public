@@ -133,7 +133,7 @@ const ENABLE_CUSTOM_BOTS = true;
 // Targeting update interval (every 500ms for more responsive bots)
 const BOT_TARGET_UPDATE_MS = 150; // targeting cadence; snappier reaction (roster is small, ~0.5ms/tick)
 // Bot unspawn delay after death (seconds)
-const BOT_UNSPAWN_DELAY = 2;
+const BOT_UNSPAWN_DELAY = 10; // B1: the body stays this long (death animation, ragdoll); the bot itself leaves 30 s after death regardless (bot lab)
 // Delay before bots start chance-based targeting (after initial target)
 const BOT_INITIAL_TARGET_DURATION_MS = 4000;
 // Chance to retarget nearest enemy each update (40%)
@@ -296,6 +296,7 @@ function spawnCustomBot(teamId: number, position: mod.Vector): BotIdentity | nul
     const identity = getAvailableBotIdentity(teamId);
     if (!identity) {
         adminDebugTool?.dynamicLog(`No available bot identity for team ${teamId}`);
+        spec('BACKFILL-FAIL', `team ${teamId}: no free bot name (bot not spawned)`);
         return null;
     }
 
@@ -309,7 +310,8 @@ function spawnCustomBot(teamId: number, position: mod.Vector): BotIdentity | nul
             mod.CreateVector(0, 0, 0)
         ) as unknown as mod.Spawner;
 
-        // Configure spawner - don't auto-unspawn on death
+        // B1b: unspawn on death OFF so the body stays (ON removed it at once, owner-observed). The round start clears
+        // the dead bots (spawnBackfillBots) and spawns fresh ones.
         mod.AISetUnspawnOnDead(spawner, false);
         mod.SetUnspawnDelayInSeconds(spawner, BOT_UNSPAWN_DELAY);
 
@@ -365,36 +367,44 @@ function associateBotByPosition(bot: mod.Player): void {
     } catch {}
 }
 
-// Spawn bots to fill all empty slots on both teams
+// BOT BACKFILL B1 (2026-10-16), designed against rules measured with the SDK bot lab (examples/portal-bot-lab):
+//  - the spawn's team argument is honoured;
+//  - a spawner respawn creates a NEW bot, DeployPlayer does not revive a dead bot;
+//  - a bot revived or undeployed outside its spawner (spawn-mode flip, UndeployPlayer, SetTeam) is removed 30 s later.
+// So each round start spawns fresh bots for the seats with no LIVING bot; dead bots leave on their own 30 s after
+// death (unspawn-on-dead ON). No holds, no revives, no flips on bots.
+function countAliveBotsOnTeam(teamId: number): number {
+    let n = 0;
+    for (const p of getBotsOnTeam(teamId)) {
+        try {
+            if (mod.GetSoldierState(p, mod.SoldierStateBool.IsAlive)) n++;
+        } catch {}
+    }
+    return n;
+}
+
 function spawnBackfillBots(): void {
     if (!ENABLE_CUSTOM_BOTS) return;
-
-    // Make sure spawn positions are initialized
     initSpawnPositions();
-
-    // Determine spawn positions based on side swap
+    // B1b: clear last round's dead bots (bodies kept all round). An undeployed bot leaves 30 s later (bot lab); its
+    // seat is refilled below by a fresh bot.
+    let cleared = 0;
+    for (const teamId of [1, 2]) {
+        for (const p of getBotsOnTeam(teamId)) {
+            try {
+                if (mod.GetSoldierState(p, mod.SoldierStateBool.IsAlive)) continue;
+                mod.UndeployPlayer(p);
+                cleared++;
+            } catch {}
+        }
+    }
+    if (cleared) spec('BOT-CLEAR', `${cleared} dead bots undeployed at round start`);
     const team1Positions = sidesSwapped ? side2SpawnPositions : side1SpawnPositions;
     const team2Positions = sidesSwapped ? side1SpawnPositions : side2SpawnPositions;
-
-    // Count current humans on each team
-    const team1Humans = countHumansOnTeam(1);
-    const team2Humans = countHumansOnTeam(2);
-
-    // Dynamic team size scales to the human count (bots only fill the short side).
     const targetSize = computeTargetTeamSize();
-
-    // Calculate how many bots needed per team
-    const team1BotsNeeded = Math.max(0, targetSize - team1Humans - countBotsOnTeam(1));
-    const team2BotsNeeded = Math.max(0, targetSize - team2Humans - countBotsOnTeam(2));
-
-    adminDebugTool?.dynamicLog(`Backfill: Team1 has ${team1Humans} humans, needs ${team1BotsNeeded} bots`);
-    adminDebugTool?.dynamicLog(`Backfill: Team2 has ${team2Humans} humans, needs ${team2BotsNeeded} bots`);
-    spec('BACKFILL', `target=${targetSize}/team t1=${team1Humans}h+${team1BotsNeeded}bot t2=${team2Humans}h+${team2BotsNeeded}bot`);
-
-    // Spawn bots for team 1 and queue their position-keyed associations. NOTE: pending
-    // entries are APPENDED, never cleared here — a second backfill can run while the
-    // first batch is still deploying (mid-countdown reconcile), and clearing would
-    // orphan the in-flight bots' identities.
+    const team1BotsNeeded = Math.max(0, targetSize - countHumansOnTeam(1) - countAliveBotsOnTeam(1));
+    const team2BotsNeeded = Math.max(0, targetSize - countHumansOnTeam(2) - countAliveBotsOnTeam(2));
+    spec('BACKFILL', `target=${targetSize}/team t1 +${team1BotsNeeded} t2 +${team2BotsNeeded} (living bots counted)`);
     let spawnedNow = 0;
     for (let i = 0; i < team1BotsNeeded && i < team1Positions.length; i++) {
         const identity = spawnCustomBot(1, team1Positions[i]);
@@ -403,8 +413,6 @@ function spawnBackfillBots(): void {
             spawnedNow++;
         }
     }
-
-    // Spawn bots for team 2 and queue their position-keyed associations
     for (let i = 0; i < team2BotsNeeded && i < team2Positions.length; i++) {
         const identity = spawnCustomBot(2, team2Positions[i]);
         if (identity) {
@@ -457,7 +465,7 @@ function undeployBotForTeam(teamId: number): void {
     const botId = mod.GetObjId(botToRemove);
 
     try {
-        mod.UndeployPlayer(botToRemove);
+        mod.Kill(botToRemove); // B1: an undeployed bot is removed 30 s later anyway (bot lab); a kill frees the seat cleanly
         adminDebugTool?.dynamicLog(`Undeployed bot ${botId} for team ${teamId}`);
     } catch {
         adminDebugTool?.dynamicLog(`Failed to undeploy bot ${botId}`);
@@ -1308,17 +1316,22 @@ function teleportAllToSeats(swapped: boolean): void {
 // one moment ZERO spectator sessions exist -> teleport EVERYONE (winners included) to
 // their round-start seats -> onDone (countdown flow). The proven anti-lock invariant is
 // unchanged: Spectating is only ever set while everyone is deployed.
+// LOCAL TEST S1 (2026-10-16): no spawn-mode flip at the revive. Every revive after spectating failed today with the
+// Spectating -> Deploy -> Spectating flip, whose Deploy step tears the spectator down abruptly (spectatorExit +
+// providerReset in one tick). Here the mode stays Spectating and the revive is DeployPlayer alone, so the spectator
+// ends through the ordinary deploy path. (K7/K7b bot clearing removed: it did not remove bots.)
 function reviveSequence(swapped: boolean, onDone: () => void): void {
-    liveSpawnModeSet = false;
-    mod.SetSpawnMode(mod.SpawnModes.Deploy);
-    spec('MODE', 'Deploy (post-card revive; deploys land through the normal Deploy path)');
+    spec('MODE', 'Spectating kept through the revive (S1; no SetSpawnMode)');
+    // B1: no bot release here. DeployPlayer does not revive a dead bot (bot lab); dead bots leave on their own and
+    // the round start spawns fresh ones.
     for (const p of [...getPlayersOnTeam(1), ...getPlayersOnTeam(2)]) {
         try {
             if (!mod.IsPlayerValid(p)) continue;
             if (mod.GetSoldierState(p, mod.SoldierStateBool.IsAISoldier)) continue;
+            mod.EnablePlayerDeploy(p, true); // F3: release the death hold
             if (mod.GetSoldierState(p, mod.SoldierStateBool.IsAlive)) continue;
             mod.DeployPlayer(p);
-            spec('REVIVE', `id=${mod.GetObjId(p)} (force-deploy under Deploy mode)`);
+            spec('REVIVE', `id=${mod.GetObjId(p)} (deploy re-enabled, force-deploy)`);
         } catch {}
     }
     let reviveChecks = 0;
@@ -1347,6 +1360,8 @@ function reviveSequence(swapped: boolean, onDone: () => void): void {
                     'REVIVES-DONE',
                     `allDeployed=${stillDead === 0} after ${reviveChecks} check${reviveChecks === 1 ? '' : 's'}`
                 );
+                // Original timing restored for the engine trace (K2 countdown end and K3 +1.5 s both left the
+                // class-select screen up; this timing gives the sticky spectator label).
                 ensureLiveSpawnMode('post-card all-deployed');
                 teleportAllToSeats(swapped);
                 onDone();
@@ -1362,10 +1377,12 @@ function enterRoundTransition(reason: string = '?'): void {
     }
     inRoundTransition = true;
     try {
-        spec('TRANSITION', `reason=${reason} widen=All`);
+        spec('TRANSITION', `reason=${reason} filters stay Team`);
         specState('pre-transition');
-        mod.SetSpectatingFiltersForAll(mod.SpectatingGroup.All, false, false);
-        spec('FILTERS', 'All (transition)');
+        // LOCAL FIX F1 (2026-10-16): own team only, always. The All widen let the dead spectate the enemy; it was a
+        // July anti-lock measure, and the lock's actual trigger was the Deploy mode flip at the revive (S1).
+        mod.SetSpectatingFiltersForAll(mod.SpectatingGroup.Team, false, true);
+        spec('FILTERS', 'Team (transition)');
         specFlush(`transition:${reason}`);
 
         // BUILD H (user-directed choreography): at round end,
@@ -1443,8 +1460,8 @@ function finishRound(isDraw: boolean, winningTeam: number, showResult: () => voi
     // caught the sticky spectator lock; the transition latch removed that second widen in
     // builds B/C. Deterministic replacement — a filters call refreshes session targets.
     try {
-        mod.SetSpectatingFiltersForAll(mod.SpectatingGroup.All, false, false);
-        spec('FILTERS', 'All (re-widen at teardown)');
+        mod.SetSpectatingFiltersForAll(mod.SpectatingGroup.Team, false, true); // F1: refresh, own team only
+        spec('FILTERS', 'Team (refresh at teardown)');
     } catch {}
 
     // Freeze all alive players (input restrictions for humans)
@@ -1787,13 +1804,41 @@ function handlePlayerDeployed(player: mod.Player): void {
     // the next round; rejecting it here undeploys the player and flashes them into spectator.
     if (roundStarted && countdownUI && !countdownUI.isRunning && !roundEnding) {
         adminDebugTool?.dynamicLog(`Blocking mid-round spawn for player ${playerId}`);
-        spec('DEPLOY-BLOCK', `id=${playerId} (mid-round) -> undeploy into spectate`);
+        spec('DEPLOY-BLOCK', `id=${playerId} (mid-round) -> native death`);
         rejectPlayer(playerId); // Mark as rejected to exclude from health calculations
         try {
-            // BUILD F: reverted to the undeploy method (user-directed). The round-end
-            // revive pass (deploy under Spectating) is what closes spectator sessions now.
-            mod.UndeployPlayer(player);
-            specUndeploy(playerId, 'mid-round-block');
+            // LOCAL TEST K1 (2026-10-16): Kill instead of UndeployPlayer. 4v4 trace: bots redeploy ~2 s after
+            // death and each undeploy of the live soldier preceded the sticky "waiting for deployment" lock.
+            // FIX F8 (2026-10-16): Spectating mode squad-spawns a dead human on a teammate who is out of combat (~8 s
+            // after death; owner's read, matching the traces). Undeploy a human back to spectating instead of killing
+            // them: no death, kill feed or score entry. The July undeploy lock came with the Deploy flip during the
+            // revive (removed in S1). Bots keep the Kill below.
+            if (!mod.GetSoldierState(player, mod.SoldierStateBool.IsAISoldier)) {
+                mod.UndeployPlayer(player);
+                spec('DEPLOY-BLOCK-UNDEPLOY', `id=${playerId} spectate-deploy undone`);
+                // F8b: then shut the deploy option until the revive, so spamming deploy on a teammate stops (F8 run:
+                // five spawn/undo cycles, and each mid-round spawn made the game remove the dead bots). Applied now,
+                // with the player already back in spectate; applied at death it kept spectate from starting (F3/F3b).
+                // The arena's SquadSpawnMode is already 3 = Disabled: this deploy belongs to Spectating mode itself.
+                Timers.setTimeout(() => {
+                    try {
+                        if (roundStarted && !roundEnding && mod.IsPlayerValid(player) && !mod.GetSoldierState(player, mod.SoldierStateBool.IsAlive)) {
+                            mod.EnablePlayerDeploy(player, false);
+                            spec('HUMAN-HOLD', `id=${playerId} deploy off after a blocked spawn`);
+                        }
+                    } catch {}
+                }, 500);
+                return;
+            }
+            // F3 backstop: a Kill on the spawn tick did nothing (F1/F2 run: the human stayed alive), so kill 1 s later.
+            Timers.setTimeout(() => {
+                try {
+                    if (roundStarted && !roundEnding && mod.IsPlayerValid(player) && mod.GetSoldierState(player, mod.SoldierStateBool.IsAlive)) {
+                        mod.Kill(player);
+                        spec('DEPLOY-BLOCK-KILL', `id=${playerId} (+1 s)`);
+                    }
+                } catch {}
+            }, 1000);
         } catch (e) {
             // Player might be invalid
         }
@@ -1807,6 +1852,11 @@ function handlePlayerDeployed(player: mod.Player): void {
     const isHuman = !mod.GetSoldierState(player, mod.SoldierStateBool.IsAISoldier);
 
     if (isHuman) {
+        // F3d (2026-10-16): the longest redeploy timer, set while alive. Set at death (F3c) the game still offered a
+        // deploy ~8.4 s later; set here it is already in force when the player dies. The revive force-deploys.
+        try {
+            mod.SetRedeployTime(player, 60);
+        } catch {}
         // JOIN-PING FIX: this used to fire for EVERY human deploy — mass-deploys (match
         // start + every round transition) played N pings to N listeners at once, which is
         // the "very loud pings at the start of the match". Ping once per NEW human only.
@@ -2177,7 +2227,18 @@ function deployAllAtStartPositions(callback: () => void): void {
     // still-spectating dead — and the sticky spectator lock spiked to near-every-round.
     // Build A (dead untouched) was clean for everyone who wasn't undeploy-cycled.
     reconcileTeams();
-    mod.DeployAllPlayers();
+    // LOCAL TEST K5 (2026-10-16): only for real stragglers. The engine trace shows this call landing in the same
+    // tick as SetSpawnMode(Spectating) with every player already deployed by the revive, and the revived human
+    // then sits in the deploy/class-select screen.
+    const stragglers = [...getPlayersOnTeam(1), ...getPlayersOnTeam(2)].filter((p) => {
+        try {
+            return mod.IsPlayerValid(p) && !mod.GetSoldierState(p, mod.SoldierStateBool.IsAlive);
+        } catch {
+            return false;
+        }
+    }).length;
+    if (stragglers > 0) mod.DeployAllPlayers();
+    spec('MASS-DEPLOY', stragglers > 0 ? `DeployAllPlayers for ${stragglers} dead` : 'skipped, everyone deployed (K5)');
 
     // Wait for players to deploy, then call callback
     // Note: Teleporting is handled by countdownUI.start() which assigns positions
@@ -2286,6 +2347,30 @@ Events.OnPlayerDied.subscribe((eventPlayer: mod.Player) => {
     // Reset bot brain on death (clear memory for respawn)
     if (mod.GetSoldierState(eventPlayer, mod.SoldierStateBool.IsAISoldier)) {
         resetBotBrain(eventPlayer);
+        // K4 (kept in B1): hold a bot that dies mid-round so it cannot redeploy under Spectating; with unspawn-on-dead
+        // on it then leaves 30 s after death and the next round spawns a fresh one.
+        // Original note: hold a bot that dies mid-round. Engine trace: a dead bot redeploys ~2 s
+        // later, the blocker parks it (alive, frozen, no weapons), it leaves the match ~25 s later, and a human
+        // spectating it loses the session (spectatorExit + providerReset while still dead) -> broken revive.
+        // Bots never spectate, so the July "never touch a death-spectator's deploy state" law is not involved.
+        if (roundStarted && !roundEnding && countdownUI && !countdownUI.isRunning) {
+            try {
+                mod.EnablePlayerDeploy(eventPlayer, false);
+                spec('BOT-HOLD', `id=${playerId} deploy off until round end`);
+            } catch {}
+        }
+    } else if (roundStarted && !roundEnding && countdownUI && !countdownUI.isRunning) {
+        // LOCAL FIX F3 (2026-10-16): a dead human could deploy ~8-10 s after death mid-round even under Spectating
+        // (F1/F2 run, rounds 2 and 4). Hold their deploy until the revive re-enables it. The July correlation of
+        // this with the spectator lock came from builds that also flipped to Deploy mode at the revive (S1).
+        // F3c: the longest redeploy timer instead of disabling deploy. EnablePlayerDeploy(false) on the dead kept
+        // death-spectate from starting at all (F3 at death, F3b at +3 s: black screen); spectate normally starts
+        // ~8 s after death, about when the game would offer a deploy. 60 s is the API maximum; the revive
+        // force-deploys regardless, and the blocker's delayed Kill covers a round that runs longer.
+        try {
+            mod.SetRedeployTime(eventPlayer, 60);
+            spec('HUMAN-HOLD', `id=${playerId} redeploy timer 60 s`);
+        } catch {}
     }
 
     // SPECTATOR-BUG FIX (part 4): the old 2s DeployPlayer->UndeployPlayer "spectator kick"
@@ -2513,6 +2598,51 @@ Events.OnPlayerEnterAreaTrigger.subscribe((player: mod.Player, trigger: mod.Area
     }
 });
 
+// FIX F6 (2026-10-16): own-team spectating. The Team filter only narrows the cycle list; the game still put dead
+// players on enemies (and teammates moved across teams were spectated as enemies). Once a second, a dead human whose
+// assigned teammate is gone or dead is pointed at a living teammate (Season 5 SetCameraTargetForPlayer). The
+// assignment only changes when needed, so cycling between teammates still works.
+const spectateTarget: Map<number, number> = new Map();
+// SetCameraTargetForPlayer is in the Season 5 game but not in the Portal publisher's published types, which reject a
+// direct call. Look it up untyped; if a runtime lacks it, the hold is skipped and the Team filter still applies.
+const seasonFiveMod = mod as unknown as { SetCameraTargetForPlayer?: (player: mod.Player, target: mod.Player) => void };
+Timers.setInterval(() => {
+    if (!roundStarted || matchEnding) return;
+    for (const teamId of [1, 2]) {
+        const team = getPlayersOnTeam(teamId);
+        for (const p of team) {
+            try {
+                if (!mod.IsPlayerValid(p) || mod.GetSoldierState(p, mod.SoldierStateBool.IsAISoldier)) continue;
+                const id = mod.GetObjId(p);
+                if (mod.GetSoldierState(p, mod.SoldierStateBool.IsAlive)) {
+                    spectateTarget.delete(id);
+                    continue;
+                }
+                const living = team.filter((q) => {
+                    try {
+                        return mod.IsPlayerValid(q) && mod.GetObjId(q) !== id && mod.GetSoldierState(q, mod.SoldierStateBool.IsAlive);
+                    } catch {
+                        return false;
+                    }
+                });
+                if (living.length === 0) continue;
+                // F6b: hold the camera on the assigned teammate every second. The cycle list still offered enemies
+                // (trace: teammate 1 -> 2 -> 3 -> enemy 4 within 3 s), so free cycling is replaced by one teammate,
+                // moving to the next only when that one dies.
+                const current = spectateTarget.get(id);
+                const keep = living.find((q) => mod.GetObjId(q) === current);
+                const target = keep ?? living[0];
+                if (!seasonFiveMod.SetCameraTargetForPlayer) continue;
+                seasonFiveMod.SetCameraTargetForPlayer(p, target);
+                if (!keep) {
+                    spectateTarget.set(id, mod.GetObjId(target));
+                    spec('SPECTATE-TARGET', `id=${id} -> teammate ${mod.GetObjId(target)}`);
+                }
+            } catch {}
+        }
+    }
+}, 1000);
+
 // Event subscriptions for the admin debug tool.
 Events.OnPlayerJoinGame.subscribe(createAdminDebugTool);
 Events.OnPlayerDeployed.subscribe(showTelemetry);
@@ -2532,6 +2662,9 @@ Events.OnPlayerJoinGame.subscribe((eventPlayer: mod.Player) => {
 Events.OnPlayerLeaveGame.subscribe((playerId: number) => {
     spec('LEAVE', `id=${playerId} roundStarted=${roundStarted} roundEnding=${roundEnding}`);
     knownHumanIds.delete(playerId);
+    // LOCAL FIX F2 (2026-10-16): a team's last player can LEAVE instead of dying (bots leave mid-round), and only
+    // deaths ran the elimination check, so the round was never called. Re-check once they are off the team lists.
+    if (roundStarted && !roundEnding) Timers.setTimeout(() => checkRoundEnd(), 250);
     // Every bot LEAVES ~2s after it dies (spawner unspawn), so this is the only place a
     // departed bot's brain can be freed — removeBotBrain(player) needs a live player
     // object that no longer resolves. Without it, brains piled up all match and
