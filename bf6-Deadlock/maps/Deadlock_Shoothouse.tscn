@@ -125,7 +125,7 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -58.2441, 93.4144, 34.2265)
 CombatVolume = NodePath("CombatVolume")
 
 [node name="CombatVolume" parent="CombatArea" instance=ExtResource("6_35kns")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 129.825, 74.381, -100.438)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 129.825, 26.5856, -100.438)
 points = PackedVector2Array(-776.443, 314.663, -800.219, 346.242, -740.673, 391.89, -716.378, 359.815)
 height = 110.0
 
