@@ -62,7 +62,7 @@ import {
     trySpawnAtDeath,
 } from './powerups.ts';
 import { clearDemotionWarning, destroyAllHuds, destroyHud, endBlackHold, ensureHud, hideHud, refreshMiniBoard, screenFlash, setDemotionWarning, showCallout, showDemotionCallout, showDemotionLockedCallout, showGetAKill, showHud, showKillerDemotedVictim, showPowerupPromotion, showPromotion, showWinner, startBlackHold, updateHud, updateKillProgress } from './hud.ts';
-import { activate, benchPlayer, benchedCount, clearBench, enforceBench, isBenched, peekBenched, removeBenched } from './bench.ts';
+import { activate, benchPlayer, benchedCount, clearBench, enforceBench, isBenched, peekBenched, refreezeBenched, removeBenched } from './bench.ts';
 import { announceFirstBlood, announceKillstreak, clearAnnouncements, STREAK_MILESTONES, streakWordMessage } from './announce.ts';
 import { showResults, clearResults, type ResultRow } from './result-ui.ts';
 
@@ -221,7 +221,7 @@ function ensureBotFloor(): void {
     pumpBotSpawn();
 }
 
-/** Current valid, non-AI (human) players — the intro's freeze/UI targets. */
+/** Current valid, non-AI, non-queued players — the intro's freeze/UI/weapon targets. */
 function humanPlayers(): mod.Player[] {
     const out: mod.Player[] = [];
     try {
@@ -230,7 +230,7 @@ function humanPlayers(): mod.Player[] {
         for (let i = 0; i < n; i++) {
             const p = mod.ValueInArray(arr, i) as mod.Player;
             try {
-                if (mod.IsPlayerValid(p) && !mod.GetSoldierState(p, mod.SoldierStateBool.IsAISoldier)) out.push(p);
+                if (mod.IsPlayerValid(p) && !mod.GetSoldierState(p, mod.SoldierStateBool.IsAISoldier) && !isBenched(mod.GetObjId(p))) out.push(p);
             } catch {}
         }
     } catch {}
@@ -496,6 +496,7 @@ Events.OnGameModeStarted.subscribe(async () => {
             giveWeapon: (p: mod.Player) => applyTierWeapon(p),
             onFight: () => {
                 mod.SetSpawnMode(mod.SpawnModes.Deploy); // countdown over -> match mode (we own respawn)
+                refreezeBenched(); // the intro just unfroze everyone, queued players included
                 matchLive = true;
                 musicOnFight(); // everyone's per-player music starts LOW (countdown stayed silent)
                 announceFight(); // global "round start" VO

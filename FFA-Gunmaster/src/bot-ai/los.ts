@@ -14,7 +14,7 @@
  * onto an enemy it actually has a clear line to.
  */
 
-import { allAliveEnemies, Tlm } from './ffa-deps.ts';
+import { aliveEnemies, Tlm } from './ffa-deps.ts';
 import { isTargetProtected } from './spawn-protect.ts';
 
 interface LosEntry {
@@ -90,21 +90,20 @@ export function updateLos(bots: mod.Player[], sightRange: number): void {
             if (!mod.GetSoldierState(bot, mod.SoldierStateBool.IsAISoldier)) continue;
 
             const botId = mod.GetObjId(bot);
-            const enemies = allAliveEnemies(bot); // FFA: everyone else is an enemy
+            const enemies = aliveEnemies(bot); // FFA: everyone else is an enemy (shared 100 ms snapshot)
 
             const eye = raise(mod.GetSoldierState(bot, mod.SoldierStateVector.GetPosition), HEAD_HEIGHT);
             let target: mod.Player | null = null;
+            let targetId = -1;
             let best = Infinity;
             for (const en of enemies) {
                 try {
-                    if (isTargetProtected(en)) continue; // fresh spawn — don't spend the LOS ray on them
-                    const d = mod.DistanceBetween(
-                        eye,
-                        mod.GetSoldierState(en, mod.SoldierStateVector.GetPosition)
-                    );
+                    if (isTargetProtected(en.pid)) continue; // fresh spawn — don't spend the LOS ray on them
+                    const d = mod.DistanceBetween(eye, en.pos);
                     if (d < best) {
                         best = d;
-                        target = en;
+                        target = en.p;
+                        targetId = en.pid;
                     }
                 } catch {}
             }
@@ -115,7 +114,7 @@ export function updateLos(bots: mod.Player[], sightRange: number): void {
             const start = mod.Add(eye, scale(dir, EYE_FORWARD));
 
             pending.set(botId, {
-                enemyId: mod.GetObjId(target),
+                enemyId: targetId,
                 eye: start,
                 targetDist: mod.DistanceBetween(start, enemyChest),
             });

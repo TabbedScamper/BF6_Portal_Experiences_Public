@@ -22,14 +22,11 @@ export function markSpawned(playerId: number): void {
     spawnedAt.set(playerId, Date.now());
 }
 
-/** True while this player is within SPAWN_TARGET_IMMUNITY_MS of their last deploy — bots skip them. */
-export function isTargetProtected(player: mod.Player): boolean {
-    try {
-        const t = spawnedAt.get(mod.GetObjId(player));
-        return t !== undefined && Date.now() - t < SPAWN_TARGET_IMMUNITY_MS;
-    } catch {
-        return false;
-    }
+/** True while this player id is within SPAWN_TARGET_IMMUNITY_MS of their last deploy — bots skip them.
+ *  Takes the id the sensors already hold, so the ~780 GetObjId calls/s it made are gone. */
+export function isTargetProtected(playerId: number): boolean {
+    const t = spawnedAt.get(playerId);
+    return t !== undefined && Date.now() - t < SPAWN_TARGET_IMMUNITY_MS;
 }
 
 /** Drop a player's record (on leave/removal). Harmless if absent; overwritten on respawn anyway. */

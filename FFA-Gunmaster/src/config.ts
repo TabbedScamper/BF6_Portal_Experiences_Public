@@ -30,7 +30,7 @@
 
 // Build tag — printed in the match-start log line so PortalLog always proves WHICH
 // build produced it (we lost a debugging day to an old bundle being tested).
-export const BUILD_TAG = '2026-07-19ba-bench-overflow-at-start';
+export const BUILD_TAG = '2026-11-04-v1.4';
 
 // (no dedicated gate team anymore — with 16 solo teams every declared team is a
 // solo slot. Team 1 doubles as the bench-parking zone: benched spectators sit on
@@ -179,14 +179,14 @@ export const LADDER_ROTATION: LadderRotation = 'shuffled';
 // disk write to PortalLog — with 32 players a test match wrote ~5,000 [Ladder]/
 // [Spawns]/[Roster]/[FFA] debug lines, real per-event I/O. Keep FALSE for release/
 // perf; flip true only for a local solo debugging session.
-export const DEBUG_MODE = true; // TEMP: diagnosing a match-start crash (checkpoints in log)
+export const DEBUG_MODE = false;
 
 // ── FFA solo-team test instrumentation (test-log.ts). TEST_LOG prints [FFATEST]
 //    lines (round start, per-human team, deploys, hostile kills/damage) and arms
 //    SendPortalLogToAdmin() so an ONLINE ("Host") match streams the result to the
 //    admin's PortalLog.txt. Set false for release. LOG_FLUSH_MS: admin-flush period
 //    (quota applies per session — raise it if flushes stop arriving mid-test).
-export const TEST_LOG = true; // TEMP: diagnosing match-start crash
+export const TEST_LOG = false;
 export const LOG_FLUSH_MS = 15000;
 
 // ============================================================================

@@ -417,7 +417,8 @@ function stateOf(playerId: number): FxState {
 /** Called every tick per player. Detects a shot and fires amped FX if applicable. */
 export function checkAmpedFx(player: mod.Player): void {
     try {
-        if (!mod.IsPlayerValid(player)) return;
+        // Bots first, one call: 16 bots x 30 Hz made this 2 calls each just to leave (round 2 profile,
+        // 2026-11-04). The engine only hands Ongoing handlers valid players.
         if (mod.GetSoldierState(player, mod.SoldierStateBool.IsAISoldier)) return; // humans only
         if (!mod.GetSoldierState(player, mod.SoldierStateBool.IsAlive)) return;
         if (!tierIsAmped(player)) return;

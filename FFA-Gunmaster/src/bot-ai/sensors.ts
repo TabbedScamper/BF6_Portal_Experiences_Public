@@ -4,7 +4,7 @@
  */
 
 import { BotMemory } from './memory.ts';
-import { getAlivePlayersOnTeam, allAliveEnemies } from './ffa-deps.ts';
+import { getAlivePlayersOnTeam, aliveEnemies } from './ffa-deps.ts';
 import { canSeeEnemy } from './los.ts';
 import { isTargetProtected } from './spawn-protect.ts';
 
@@ -79,37 +79,37 @@ export function canDetectEnemy(
 export function senseEnemy(bot: mod.Player, memory: BotMemory): mod.Player | null {
     try {
         const botPos = mod.GetSoldierState(bot, mod.SoldierStateVector.GetPosition);
-        const enemies = allAliveEnemies(bot); // FFA: everyone else is an enemy
+        const enemies = aliveEnemies(bot); // FFA: everyone else is an enemy (shared 100 ms snapshot)
 
         // Find closest DETECTABLE enemy, with priority to firing enemies
         let closestEnemy: mod.Player | null = null;
+        let closestEnemyId = -1;
         let closestDistance = Infinity;
         let closestFiringEnemy: mod.Player | null = null;
+        let closestFiringId = -1;
         let closestFiringDistance = Infinity;
 
         for (const enemy of enemies) {
             try {
-                if (!mod.IsPlayerValid(enemy)) continue;
-                if (isTargetProtected(enemy)) continue; // just spawned — bots don't lock onto them yet
+                if (isTargetProtected(enemy.pid)) continue; // just spawned — bots don't lock onto them yet
 
-                const enemyPos = mod.GetSoldierState(enemy, mod.SoldierStateVector.GetPosition);
-                const distance = mod.DistanceBetween(botPos, enemyPos);
+                const distance = mod.DistanceBetween(botPos, enemy.pos);
 
-                // Check if enemy is firing - they get priority detection!
-                const isFiring = mod.GetSoldierState(enemy, mod.SoldierStateBool.IsFiring);
-
-                if (isFiring && distance < SENSOR_CONFIG.SIGHT_RANGE) {
+                // Firing enemies get priority detection (firing state from the shared snapshot)
+                if (enemy.firing && distance < SENSOR_CONFIG.SIGHT_RANGE) {
                     // Firing enemies are ALWAYS detected within sight range
                     if (distance < closestFiringDistance) {
                         closestFiringDistance = distance;
-                        closestFiringEnemy = enemy;
+                        closestFiringEnemy = enemy.p;
+                        closestFiringId = enemy.pid;
                     }
                 }
 
                 // Check if we can detect this enemy (normal detection)
-                if (distance < closestDistance && canDetectEnemy(botPos, enemyPos)) {
+                if (distance < closestDistance && canDetectEnemy(botPos, enemy.pos)) {
                     closestDistance = distance;
-                    closestEnemy = enemy;
+                    closestEnemy = enemy.p;
+                    closestEnemyId = enemy.pid;
                 }
             } catch {}
         }
@@ -122,10 +122,10 @@ export function senseEnemy(bot: mod.Player, memory: BotMemory): mod.Player | nul
         // Point-blank enemies are always seen; beyond that, require a clear raycast LOS (no wallhacks).
         if (
             closestFiringEnemy &&
-            (closestFiringDistance < PB || canSeeEnemy(botId, mod.GetObjId(closestFiringEnemy)))
+            (closestFiringDistance < PB || canSeeEnemy(botId, closestFiringId))
         ) {
             targetEnemy = closestFiringEnemy; // firing + visible = highest priority
-        } else if (closestEnemy && (closestDistance < PB || canSeeEnemy(botId, mod.GetObjId(closestEnemy)))) {
+        } else if (closestEnemy && (closestDistance < PB || canSeeEnemy(botId, closestEnemyId))) {
             targetEnemy = closestEnemy;
         }
 

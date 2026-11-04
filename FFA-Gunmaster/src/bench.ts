@@ -90,6 +90,8 @@ export function enforceBench(player: mod.Player): boolean {
         // benched body parked at the HQ stack automatically — no park logic needed.
         if (BENCH_FREECAM) {
             try { mod.SetCameraTypeForPlayer(player, mod.Cameras.Free); } catch {}
+            // Free camera collides with the map by default: a queued camera got trapped under it (2026-11-04).
+            try { mod.SetFreeCameraCollisionForPlayer(player, false); } catch {}
         }
         showQueueUi(player, id);
         refreshQueueUi();
@@ -102,6 +104,19 @@ export function enforceBench(player: mod.Player): boolean {
 
 export function isBenched(playerId: number): boolean {
     return benchedSet.has(playerId);
+}
+
+/** Re-freeze every queued player: the intro's FIGHT unfreezes everyone, and an unfrozen queued
+ *  soldier walks (and can die) under the free camera's movement keys (live test 2026-11-04). */
+export function refreezeBenched(): void {
+    try {
+        const arr = mod.AllPlayers();
+        const n = mod.CountOf(arr);
+        for (let i = 0; i < n; i++) {
+            const p = mod.ValueInArray(arr, i) as mod.Player;
+            try { if (mod.IsPlayerValid(p) && benchedSet.has(mod.GetObjId(p))) freezePlayer(p, true); } catch {}
+        }
+    } catch {}
 }
 
 export function benchedCount(): number {
@@ -128,6 +143,7 @@ export function activate(player: mod.Player): void {
         removeBenched(mod.GetObjId(player));
         unfreezePlayer(player);
         try { mod.SetPlayerIncomingDamageFactor(player, 1); } catch {}
+        try { mod.SetFreeCameraCollisionForPlayer(player, true); } catch {}
         try { mod.SetCameraTypeForPlayer(player, mod.Cameras.FirstPerson); } catch {}
         mod.EnablePlayerDeploy(player, true);
     } catch {}
@@ -143,5 +159,6 @@ export function clearBench(): void {
     } catch {}
     try {
         mod.SetCameraTypeForAll(mod.Cameras.FirstPerson); // no freecam stragglers into the next round
+        mod.SetFreeCameraCollisionForAll(true);
     } catch {}
 }
